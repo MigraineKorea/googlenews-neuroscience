@@ -31,7 +31,9 @@ jobs:
           python-version: '3.8'
 
       - name: Install Dependencies
-        run: pip install requests python-dateutil beautifulsoup4 pytz
+        run: |
+          pip install requests python-dateutil beautifulsoup4 pytz
+          sudo apt-get install sqlite3
 
       - name: Get workflow info and download previous database
         id: workflow_info
@@ -52,14 +54,16 @@ jobs:
             
             if (process.env.INITIALIZE_MODE_TOPIC !== 'true' && latestRunId) {
               try {
-                await github.rest.actions.downloadArtifact({
+                const artifact = await github.rest.actions.downloadArtifact({
                   owner, repo,
                   artifact_id: latestRunId,
                   archive_format: 'zip'
                 });
-                console.log('Previous database downloaded successfully');
+                require('fs').writeFileSync('db.zip', Buffer.from(artifact.data));
+                require('child_process').execSync('unzip db.zip && mv *.db google_news_topic.db');
+                console.log('Previous database downloaded and extracted successfully');
               } catch (error) {
-                console.log('Failed to download previous database:', error.message);
+                console.log('Failed to download or extract previous database:', error.message);
               }
             }
             
@@ -70,11 +74,23 @@ jobs:
           if [ "${{ env.INITIALIZE_MODE_TOPIC }}" == "true" ] || [ ! -f google_news_topic.db ] || [ ! -s google_news_topic.db ]; then
             echo "Initializing or creating new database"
             rm -f google_news_topic.db
-            touch google_news_topic.db
+            sqlite3 google_news_topic.db "CREATE TABLE IF NOT EXISTS news_items (pub_date TEXT, guid TEXT PRIMARY KEY, title TEXT, link TEXT, topic TEXT, related_news TEXT);"
           fi
 
+      - name: Check Database Contents Before Processing
+        run: |
+          echo "Database contents before processing:"
+          sqlite3 google_news_topic.db "SELECT COUNT(*) FROM news_items;"
+          sqlite3 google_news_topic.db "SELECT * FROM news_items LIMIT 5;"
+
       - name: Read Google News RSS and Post to Discord
-        run: python scripts/googlenews-topic_to_discord.py
+        run: python .github/scripts/googlenews-topic_to_discord.py
+
+      - name: Check Database Contents After Processing
+        run: |
+          echo "Database contents after processing:"
+          sqlite3 google_news_topic.db "SELECT COUNT(*) FROM news_items;"
+          sqlite3 google_news_topic.db "SELECT * FROM news_items ORDER BY pub_date DESC LIMIT 5;"
 
       - name: Upload updated database
         uses: actions/upload-artifact@v4
@@ -92,5 +108,7 @@ jobs:
           ls -la
           echo "Database file size:"
           ls -lh google_news_topic.db || echo "Database file not found"
-          echo "Database contents (if exists):"
-          sqlite3 google_news_topic.db "SELECT COUNT(*) FROM news_items;" || echo "Unable to query database"
+          echo "Database schema:"
+          sqlite3 google_news_topic.db ".schema"
+          echo "Total number of entries in database:"
+          sqlite3 google_news_topic.db "SELECT COUNT(*) FROM news_items;"
