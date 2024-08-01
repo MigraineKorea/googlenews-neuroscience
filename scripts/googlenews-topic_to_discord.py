@@ -650,51 +650,60 @@ def init_db(reset=False):
 
 def is_guid_posted(guid):
     """주어진 GUID가 이미 게시되었는지 확인합니다."""
-    with sqlite3.connect(DB_PATH) as conn:
-        c = conn.cursor()
-        c.execute("SELECT 1 FROM news_items WHERE guid = ?", (guid,))
-        return c.fetchone() is not None
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            c.execute("SELECT 1 FROM news_items WHERE guid = ?", (guid,))
+            result = c.fetchone() is not None
+            logging.info(f"GUID {guid} 확인 결과: {'이미 게시됨' if result else '새로운 항목'}")
+            return result
+    except sqlite3.Error as e:
+        logging.error(f"데이터베이스 오류 (GUID 확인 중): {e}")
+        return False
 
 def save_news_item(pub_date, guid, title, link, topic, related_news):
     """뉴스 항목을 데이터베이스에 저장합니다."""
-    with sqlite3.connect(DB_PATH) as conn:
-        c = conn.cursor()
-        
-        # 기존 테이블 구조 확인
-        c.execute("PRAGMA table_info(news_items)")
-        columns = [column[1] for column in c.fetchall()]
-        
-        # 관련 뉴스 항목 수 확인
-        related_news_count = len(json.loads(related_news))
-        
-        # 필요한 열 추가
-        for i in range(related_news_count):
-            title_col = f"related_title_{i+1}"
-            press_col = f"related_press_{i+1}"
-            link_col = f"related_link_{i+1}"
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
             
-            if title_col not in columns:
-                c.execute(f"ALTER TABLE news_items ADD COLUMN {title_col} TEXT")
-            if press_col not in columns:
-                c.execute(f"ALTER TABLE news_items ADD COLUMN {press_col} TEXT")
-            if link_col not in columns:
-                c.execute(f"ALTER TABLE news_items ADD COLUMN {link_col} TEXT")
-        
-        # 데이터 삽입을 위한 SQL 쿼리 준비
-        columns = ["pub_date", "guid", "title", "link", "topic", "related_news"]
-        values = [pub_date, guid, title, link, topic, related_news]
-        
-        related_news_items = json.loads(related_news)
-        for i, item in enumerate(related_news_items):
-            columns.extend([f"related_title_{i+1}", f"related_press_{i+1}", f"related_link_{i+1}"])
-            values.extend([item['title'], item['press'], item['link']])
-        
-        placeholders = ", ".join(["?" for _ in values])
-        columns_str = ", ".join(columns)
-        
-        c.execute(f"INSERT OR REPLACE INTO news_items ({columns_str}) VALUES ({placeholders})", values)
-        
-        logging.info(f"새 뉴스 항목 저장: {guid}")
+            # 기존 테이블 구조 확인
+            c.execute("PRAGMA table_info(news_items)")
+            columns = [column[1] for column in c.fetchall()]
+            
+            # 관련 뉴스 항목 수 확인
+            related_news_count = len(json.loads(related_news))
+            
+            # 필요한 열 추가
+            for i in range(related_news_count):
+                title_col = f"related_title_{i+1}"
+                press_col = f"related_press_{i+1}"
+                link_col = f"related_link_{i+1}"
+                
+                if title_col not in columns:
+                    c.execute(f"ALTER TABLE news_items ADD COLUMN {title_col} TEXT")
+                if press_col not in columns:
+                    c.execute(f"ALTER TABLE news_items ADD COLUMN {press_col} TEXT")
+                if link_col not in columns:
+                    c.execute(f"ALTER TABLE news_items ADD COLUMN {link_col} TEXT")
+            
+            # 데이터 삽입을 위한 SQL 쿼리 준비
+            columns = ["pub_date", "guid", "title", "link", "topic", "related_news"]
+            values = [pub_date, guid, title, link, topic, related_news]
+            
+            related_news_items = json.loads(related_news)
+            for i, item in enumerate(related_news_items):
+                columns.extend([f"related_title_{i+1}", f"related_press_{i+1}", f"related_link_{i+1}"])
+                values.extend([item['title'], item['press'], item['link']])
+            
+            placeholders = ", ".join(["?" for _ in values])
+            columns_str = ", ".join(columns)
+            
+            c.execute(f"INSERT OR REPLACE INTO news_items ({columns_str}) VALUES ({placeholders})", values)
+            
+            logging.info(f"새 뉴스 항목 저장됨: {guid}")
+    except sqlite3.Error as e:
+        logging.error(f"데이터베이스 오류 (뉴스 항목 저장 중): {e}")
 
 def fetch_decoded_batch_execute(id):
     s = (
@@ -1270,10 +1279,12 @@ def main():
     else:
         news_items = list(reversed(news_items))
 
+
     for item in news_items:
         guid = item.find('guid').text
 
         if not INITIALIZE_TOPIC and is_guid_posted(guid):
+            logging.info(f"이미 게시된 항목 건너뜀: {guid}")
             continue
 
         title = replace_brackets(item.find('title').text)
