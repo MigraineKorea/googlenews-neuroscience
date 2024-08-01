@@ -1,0 +1,96 @@
+name: Google News (Topic) RSS to Discord
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'  # 30분마다 실행
+  workflow_dispatch:
+
+env:
+  INITIALIZE_MODE_TOPIC: ${{ secrets.INITIALIZE_MODE_GOOGLENEWS_TOPIC }}
+  DISCORD_WEBHOOK_TOPIC: ${{ secrets.DISCORD_WEBHOOK_GOOGLENEWS_TOPIC }}
+  DISCORD_AVATAR_TOPIC: ${{ secrets.DISCORD_AVATAR_GOOGLENEWS_TOPIC }}
+  DISCORD_USERNAME_TOPIC: ${{ secrets.DISCORD_USERNAME_GOOGLENEWS_TOPIC }}
+  ADVANCED_FILTER_TOPIC: ${{ secrets.ADVANCED_FILTER_GOOGLENEWS_TOPIC }}
+  DATE_FILTER_TOPIC: ${{ secrets.DATE_FILTER_GOOGLENEWS_TOPIC }}
+  ORIGIN_LINK_TOPIC: ${{ secrets.ORIGIN_LINK_GOOGLENEWS_TOPIC }}
+  TOPIC_MODE: ${{ secrets.TOPIC_MODE }}
+  TOPIC_KEYWORD: ${{ secrets.TOPIC_KEYWORD }}
+  TOPIC_PARAMS: ${{ secrets.TOPIC_PARAMS }}
+  RSS_URL_TOPIC: ${{ secrets.RSS_URL_GOOGLENEWS_TOPIC }}
+
+jobs:
+  fetch-and-post:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.8'
+
+      - name: Install Dependencies
+        run: pip install requests python-dateutil beautifulsoup4 pytz
+
+      - name: Get workflow info and download previous database
+        id: workflow_info
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+            const workflows = await github.rest.actions.listRepoWorkflows({ owner, repo });
+            const workflow = workflows.data.workflows.find(wf => wf.path.endsWith('googlenews-topic_to_discord.yml'));
+            if (!workflow) throw new Error('Workflow not found');
+            const workflowId = workflow.id.toString();
+            
+            const runs = await github.rest.actions.listWorkflowRuns({
+              owner, repo, workflow_id: workflowId, status: 'success'
+            });
+            const latestRunId = runs.data.workflow_runs[0]?.id.toString() || '';
+            
+            if (process.env.INITIALIZE_MODE_TOPIC !== 'true' && latestRunId) {
+              try {
+                await github.rest.actions.downloadArtifact({
+                  owner, repo,
+                  artifact_id: latestRunId,
+                  archive_format: 'zip'
+                });
+                console.log('Previous database downloaded successfully');
+              } catch (error) {
+                console.log('Failed to download previous database:', error.message);
+              }
+            }
+            
+            return { workflowId, latestRunId };
+
+      - name: Initialize or check database
+        run: |
+          if [ "${{ env.INITIALIZE_MODE_TOPIC }}" == "true" ] || [ ! -f google_news_topic.db ] || [ ! -s google_news_topic.db ]; then
+            echo "Initializing or creating new database"
+            rm -f google_news_topic.db
+            touch google_news_topic.db
+          fi
+
+      - name: Read Google News RSS and Post to Discord
+        run: python .github/scripts/googlenews-topic_to_discord.py
+
+      - name: Upload updated database
+        uses: actions/upload-artifact@v4
+        with:
+          name: googlenews_topic_database
+          path: google_news_topic.db
+          retention-days: 90
+
+      - name: Debug Information
+        if: always()
+        run: |
+          echo "Latest successful run ID: ${{ fromJson(steps.workflow_info.outputs.result).latestRunId }}"
+          echo "INITIALIZE_MODE_TOPIC: ${{ env.INITIALIZE_MODE_TOPIC }}"
+          echo "Workspace contents:"
+          ls -la
+          echo "Database file size:"
+          ls -lh google_news_topic.db || echo "Database file not found"
+          echo "Database contents (if exists):"
+          sqlite3 google_news_topic.db "SELECT COUNT(*) FROM news_items;" || echo "Unable to query database"
