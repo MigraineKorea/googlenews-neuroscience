@@ -84,7 +84,7 @@ jobs:
           sqlite3 google_news_topic.db "SELECT * FROM news_items LIMIT 5;"
 
       - name: Read Google News RSS and Post to Discord
-        run: python .github/scripts/googlenews-topic_to_discord.py
+        run: python scripts/googlenews-topic_to_discord.py
 
       - name: Check Database Contents After Processing
         run: |
