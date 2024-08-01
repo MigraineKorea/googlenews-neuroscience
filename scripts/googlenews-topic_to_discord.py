@@ -1246,7 +1246,7 @@ def is_korean_params(params):
     return 'hl=ko' in params and 'gl=KR' in params and 'ceid=KR%3Ako' in params
 
 def main():
-    init_db(reset=INITIALIZE_TOPIC)
+    init_db
 
     session = requests.Session()
 
